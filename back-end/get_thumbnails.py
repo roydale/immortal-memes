@@ -3,17 +3,18 @@ import boto3
 import base64
 import io
 import time
+from botocore.exceptions import ClientError
 
 def lambda_handler(event, context):
-    ### get the S3 service resource
-    s3 = 
-    bucket = 
+    # get the S3 service resource
+    s3 = boto3.resource("s3")
+    bucket = s3.Bucket("rc86-quantic-im-memes")
     
-    ### get all meme entries from the database
-    dynamodb = 
-    table = 
-    db_memes = 
-    memes = 
+    # get all meme entries from the database
+    dynamodb = boto3.resource("dynamodb")
+    table = dynamodb.Table("im-memes")
+    db_memes = table.scan()
+    memes = db_memes["Items"]
 
     # build the response for each entry. id, userName, and timePosted
     # simply pass through. we compute timeToLive from timeToDie and
@@ -23,21 +24,29 @@ def lambda_handler(event, context):
     
     for meme in memes:
         # skip this thumbnail if it's past its time to die
-        if time_now > : ### time to die value from database
+        if time_now > int(meme["timeToDie"]): # time to die value from database
             continue
 
         # create a thumbnail item with metadata and image data
         thumbnail = {
-            "timeToLive": , ### timeToLive (in seconds remaining) computed as timeToDie - time_now
-            "timePosted": , ### directly from database
-            "userName": , ### directly from database
-            "id": ### directly from database
+            "timeToLive": (
+                int(meme["timeToDie"]) - time_now
+            ), # timeToLive (in seconds remaining) computed as timeToDie - time_now
+            "timePosted": int(meme["timePosted"]), # directly from database
+            "userName": meme["userName"], # directly from database
+            "id": meme["id"] # directly from database
         }
 
         # load the image into an in-memory file object
         with io.BytesIO() as in_mem_file:
-            ### download a thumbnail image from S3. skip the meme if the thumbnail doesn't exist
-        
+            # download a thumbnail image from S3. skip the meme if the thumbnail doesn't exist
+            try:
+                bucket.download_fileobj(f"/thumbnails/{meme['id']}", in_mem_file)
+            except ClientError as error:
+                if error.response["Error"]["Code"] == "404":
+                    continue
+                else:
+                    raise error
             # now write the image into the thumbnail as a base64 data URL
             # base 64 conversion code courtesy of https://stackoverflow.com/a/68989496/4062628
             thumbnail["imageUrl"] = (
@@ -47,4 +56,8 @@ def lambda_handler(event, context):
         # add the thumbnail to the response
         thumbnails.append(thumbnail)
         
-    ### return thumbnails as the body
+    # return thumbnails as the body
+    return {
+        "statusCode": 200,
+        "body": json.dumps(thumbnails)
+    }
